@@ -44,7 +44,7 @@ def train():
     #embed()
     #sys.exit()
     q_network = MLN(sim.INPUT_DIM, sim.NUM_ACTION)
-    target_network = MLN(sim.INPUT_DIM, sim.NUM_ACTION, name_scope='target/')
+    target_network = MLN(sim.INPUT_DIM, sim.NUM_ACTION, name_scope='target')
 
     with tf.Graph().as_default():
 

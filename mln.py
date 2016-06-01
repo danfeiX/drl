@@ -10,12 +10,11 @@ class MLN:
         self.name_scope = name_scope
 
     def inference(self, input_x):
-        fc1 = FC_Layer(self.input_dim, self.fc_dims[0],
-                       input_x, self.name_scope+"fc1", tf.identity)
-        fc2 = FC_Layer(self.fc_dims[0], self.fc_dims[1],
-                       fc1.op, self.name_scope+"fc2", tf.identity)
-        fc_out = FC_Layer(self.fc_dims[1], self.output_dim,
-                          fc2.op, self.name_scope+"fc_out", tf.identity)
+        with tf.variable_scope(self.name_scope):
+            fc1 = FC_Layer(self.input_dim, self.fc_dims[0], input_x, "fc1", tf.identity)
+            fc2 = FC_Layer(fc1.output_dim, self.fc_dims[1], fc1.op, "fc2", tf.identity)
+            fc_out = FC_Layer(fc2.output_dim, self.output_dim, fc2.op, "fc_out", tf.identity)
+
         self.vars.extend(fc1.vars)
         self.vars.extend(fc2.vars)
         self.vars.extend(fc_out.vars)
