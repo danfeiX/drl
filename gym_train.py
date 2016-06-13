@@ -36,15 +36,16 @@ tf.app.flags.DEFINE_integer('learning_rate', 1e-6,
 
 
 def train():
-    np.random.seed(0)
-    tf.set_random_seed(0)
-    sim = GymSim('CartPole-v0', 5000)
-    sim.act_random(5000, FLAGS.sample_neg_ratio) # bootstrap with random actions
+    rnd_seed = 0
+    np.random.seed(rnd_seed)
+    tf.set_random_seed(rnd_seed)
+    sim = GymSim('CartPole-v0', 5000, seed=rnd_seed)
+    sim.act_sample_batch(5000, FLAGS.sample_neg_ratio) # bootstrap with random actions
     sim.print_stats()
     #embed()
     #sys.exit()
-    q_network = MLN(sim.INPUT_DIM, sim.NUM_ACTION)
-    target_network = MLN(sim.INPUT_DIM, sim.NUM_ACTION, name_scope='target')
+    q_network = MLN(sim.INPUT_DIM, sim.ACTION_DIM)
+    target_network = MLN(sim.INPUT_DIM, sim.ACTION_DIM, name_scope='target')
 
     with tf.Graph().as_default():
 
@@ -60,7 +61,7 @@ def train():
         target_q_pt = tf.Print(target_q, [target_q])
         action_q_pt = tf.Print(action_q, [action_q])
 
-        loss = dqn.td_loss(action_pl, sim.NUM_ACTION, action_q, reward_pl, target_q)
+        loss = dqn.td_loss(action_pl, sim.ACTION_DIM, action_q, reward_pl, target_q)
 
         train_op = dqn.train(FLAGS.learning_rate, loss, global_step)
 
@@ -113,22 +114,20 @@ def train():
                                 examples_per_sec, sec_per_batch))
 
         if step > FLAGS.sample_after:
-            state = np.expand_dims(sim.state, 0)
             pred_act = sess.run(action_op,
-                                feed_dict={state_pl: state})
+                                feed_dict={state_pl: sim.state})
             pred_act = pred_act[0]
             sim.act(pred_act, neg_ratio=FLAGS.sample_neg_ratio,
                     append_db=True)
 
 
         # visualization
-        if step % 3000 == 0 and step != 0:
+        if step % 1000 == 0 and step != 0:
             sim.reset()
             survive = 0
             for _ in range(200):
-                state = np.expand_dims(sim.state, 0)
                 pred_act = sess.run(action_op,
-                                    feed_dict={state_pl: state})
+                                    feed_dict={state_pl: sim.state})
                 pred_act = pred_act[0]
                 done = sim.act_demo(pred_act)
                 if not done:

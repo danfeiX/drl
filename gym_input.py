@@ -2,38 +2,50 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import tensorflow as tf
 import gym
 import collections
 import numpy as np
+import h5py
 from IPython import embed
-
-FLAGS = tf.app.flags.FLAGS
 
 
 class GymSim:
-    def __init__(self, sim_name, db_size):
-        self._env = gym.make(sim_name)
-        self._env.reset()
-        self._sim_name = sim_name
 
-        self._observation_dim = self._env.observation_space.shape[0]
-        self._action_dim = self._env.action_space.n
+    def __init__(self, sim_name, max_sample=0, seed=0):
+        self._env = gym.make(sim_name)
+        self._sim_name = sim_name
+        self._env.seed(seed)
+
         self._iter_count = 0
         self._episode_count = 0
-        self._sample_base = collections.deque(maxlen=db_size)
+
+        if max_sample <= 0:
+            self._sample_base = []
+        else:
+            self._sample_base = collections.deque(maxlen=max_sample)
+
         self._episode_num_pos = 0 # num positive samples from the current episode
-        self._episode_num_neg = 0 # num positive samples from the current episode
+        self._episode_num_neg = 0 # num negative samples from the current episode
+
 
     @property
     def state(self):
-        return np.array(self._env.state)
+        state = self._state_preprocess(self._env.state)
+        return np.expand_dims(state, 0)
 
-    def hard_done(self):
-        s = self.state
-        if self._sim_name == 'CartPole-v0':
-            return s[0] < -2.4 or s[0] > 2.4
-        return False
+
+    def _state_preprocess(self, state):
+        return np.array(state)
+
+    @property
+    def ACTION_DIM(self):
+        return self._env.action_space.n
+
+
+    @property
+    def INPUT_DIM(self):
+        return self._env.observation_space.shape[0]
+
 
     def reset(self):
         self._episode_num_pos = 0
@@ -42,22 +54,39 @@ class GymSim:
         self._env.reset()
         print(self._episode_count)
 
-    def act(self, action=None, neg_ratio=0, append_db=False, use_hard_done=False):
+
+    def _act(self, action=None):
+        """
+        A wrapper function for acting in the gym
+        environment.
+        """
         state = self.state
-        sampling_neg = False
+
         if action is None:
             action = self._env.action_space.sample()
 
-        observation, reward, done, info = self._env.step(action)
-        print(reward)
+        _, reward, done, info = self._env.step(action)
+        observation = self.state
+
+        return [state, observation, reward, done, action, info]
+
+
+    def act_sample_batch(self, num_sample, neg_ratio=0):
+        for _ in xrange(num_sample):
+            self.act_sample_once(neg_ratio=neg_ratio, append_db=True)
+
+
+    def act_sample_once(self, action=None, neg_ratio=0, append_db=False):
+        state = self.state
+        sampling_neg = False
+
+        state, observation, reward, done, action, info = self._act(action)
 
         if done:
             # if not sampling negative and new episode
-            if (use_hard_done and self.hard_done()) or \
-                neg_ratio * self._episode_num_pos <= self._episode_num_neg:
+            if neg_ratio * self._episode_num_pos <= self._episode_num_neg:
                 self.reset()
-                state = self.state
-                observation, reward, done, info = self._env.step(action)
+                state, observation, reward, done, action, info = self._act(action)
             #if sampling negative
             else:
                 sampling_neg = True
@@ -67,21 +96,23 @@ class GymSim:
         else:
             self._episode_num_pos += 1
 
-        self._iter_count += 1
         if append_db:
-            self.append_db([np.array(state).copy(),
-                            action, reward,
-                            np.array(observation).copy()])
+            self.append_db([state, action, reward, observation])
+
+        self._iter_count += 1
+
 
     def act_demo(self, action, vis=True):
-        _, _, done, _ = self._env.step(action)
+        _, _, _, done, _, _ = self._act(action)
         if done:
-            self._env.reset()
+            self.reset()
         self.render()
         return done
 
+
     def append_db(self, entry):
         self._sample_base.append(entry)
+
 
     def print_stats(self):
         pos = 0; neg = 0
@@ -93,13 +124,6 @@ class GymSim:
         print('num_pos=%i, num_neg=%i, episode=%i'
               % (pos, neg, self._episode_count))
 
-    @property
-    def NUM_ACTION(self):
-        return self._action_dim
-
-    @property
-    def INPUT_DIM(self):
-        return self._observation_dim
 
     def next_batch(self, batch_size):
         #s, a, r, s'
@@ -112,6 +136,7 @@ class GymSim:
 
         return state_batch, action_batch, reward_batch, observ_batch
 
+
     def feed_batch(self, state_pl, action_pl, reward_pl, observ_pl, batch_size):
         s, a, r, o = self.next_batch(batch_size)
         return {state_pl: s,
@@ -119,17 +144,30 @@ class GymSim:
                 reward_pl: r,
                 observ_pl: o}
 
-    def act_random(self, num_sample, neg_ratio=0):
-        for _ in range(num_sample):
-            self.act(neg_ratio=neg_ratio, append_db=True)
 
-    def act_deepq(self, action_op, num_sample=1, frac_neg=0, add_db=True, render=False):
-        for _ in range(num_sample):
-            state = self.state
-            action = action_op(state)
-            self.act(action, frac_neg, add_db)
-            if render:
-                self.render()
+    def render(self, return_im=False):
+        if return_im:
+            return self._env.render('rgb_array')
+        else:
+            self._env.render()
 
-    def render(self):
-        self._env.render()
+
+    def dump_db(self, fn):
+        h5 = h5py.File(fn, 'w')
+
+        state = np.vstack([sample[0] for sample in self._sample_base])
+        action = np.array([sample[1] for sample in self._sample_base])
+        reward = np.array([sample[2] for sample in self._sample_base])
+        observ = np.vstack([sample[3] for sample in self._sample_base])
+
+        h5.create_dataset("state", data=state)
+        h5.create_dataset("action", data=action)
+        h5.create_dataset("reward", data=reward)
+        h5.create_dataset("observ", data=observ)
+        h5.close()
+
+
+if __name__ == '__main__':
+    sim = GymSim('CartPole-v0', 1000)
+    sim.act_sample_batch(1000, 1)
+    sim.dump_db('cartpole_1000.h5')
