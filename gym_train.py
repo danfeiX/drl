@@ -117,8 +117,8 @@ def train():
             pred_act = sess.run(action_op,
                                 feed_dict={state_pl: sim.state})
             pred_act = pred_act[0]
-            sim.act(pred_act, neg_ratio=FLAGS.sample_neg_ratio,
-                    append_db=True)
+            sim.act_sample_once(pred_act, neg_ratio=FLAGS.sample_neg_ratio,
+                                append_db=True)
 
 
         # visualization
